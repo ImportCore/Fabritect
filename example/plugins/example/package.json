@@ -1,0 +1,18 @@
+{
+  "name": "example",
+  "version": "1.0.0",
+  "description": "An example plugin",
+  "main": "main.js",
+  "author": "",
+  "license": "MIT",
+  "plugin": {
+    "consumes": [
+      "APP:HTTP@1.0.0"
+    ],
+    "exports": {
+      "GLOBAL": [
+        "exampleFunction"
+      ]
+    }
+  }
+}
