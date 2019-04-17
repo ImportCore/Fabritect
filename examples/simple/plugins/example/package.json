@@ -5,14 +5,11 @@
   "main": "main.js",
   "author": "",
   "license": "MIT",
-  "plugin": {
-    "consumes": [
-      "APP:HTTP@1.0.0"
-    ],
-    "exports": {
-      "GLOBAL": [
-        "exampleFunction"
-      ]
+  "fabritect": {
+    "for": ["Observo"],
+    "consumes": {
+      "app@http": "1.0.0",
+      "app@math": "1.0.0"
     }
   }
 }
