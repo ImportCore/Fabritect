@@ -6,7 +6,6 @@ const findAny = (string, list) => {
             return true
     return false
 }
-
 //Splits at a specific index (string)
 const splitAt = index => x => [x.slice(0, index), x.slice(index)]
 
@@ -32,11 +31,25 @@ const getPackages = async (path) => {
 const timeDiff = (startTime) => {
     return ((process.hrtime(startTime)[0] * 1000) + (process.hrtime(startTime)[1] / 1000000)).toFixed(3)
 }
+let formatConsumes = (consumes) => {
+    let list = {}
+    for (let item in consumes) {
+        let [_group, _module] = item.split("@");
+        let ver = consumes[item]
+        if (list[_group] == null) {
+            list[_group] = {}
+        }
+        list[_group][_module] = ver
+    }
+    return list
+}
+
 //Export it
 module.exports = {
     findAny,
     splitAt,
     doesExist,
     getPackages,
-    timeDiff
+    timeDiff,
+    formatConsumes
 }

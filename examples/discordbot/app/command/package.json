@@ -1,5 +1,5 @@
 {
-  "name": "storage",
+  "name": "command",
   "version": "1.0.0",
   "description": "An example plugin",
   "main": "main.js",
@@ -8,7 +8,7 @@
   "fabritect": {
     "for": ["Observo"],
     "consumes": {
-   
+      "app@core": "1.0.0"
     }
   }
 }

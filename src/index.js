@@ -13,27 +13,15 @@ const treeify = require('treeify');
 const startTime = process.hrtime()
 const chalk = require('chalk');
 
-let { splitAt, doesExist, getPackages, timeDiff } = require("./helper")
+let { splitAt, doesExist, getPackages, timeDiff, formatConsumes } = require("./helper")
 
-let formatConsumes = (consumes) => {
-    let list = {}
-    for (let item in consumes) {
-        let [_group, _module] = item.split("@");
-        let ver = consumes[item]
-        if (list[_group] == null) {
-            list[_group] = {}
-        }
-        list[_group][_module] = ver
-    }
-    return list
-}
 
 
 //Make Class
 module.exports = class Fabritect extends EventEmitter {
     constructor(prefix = "Plugin") {
         super()
-        this.l = [] //List of loaded async modules
+        this.loadWaiting = [] //List of loaded async modules
         this.p = prefix //Prefix for modules
         this.g = {} //Group Object
         this.c = (g, n, code) => { return code }
@@ -75,75 +63,106 @@ module.exports = class Fabritect extends EventEmitter {
          * @param {String} folder 
          */
         let self = this
+        /**
+         * loadFileAsync - Loads the package file async and the code file async and adds all information to group object
+         * @param {String} item 
+         */
+        let loadFileAsync = (item) => {
+            return new Promise((resolve, reject) => {
+                //Read the package file
+                fs.readFile(item, 'utf8', async (err, packageData) => {
+                    //Parse the package file
+                    //TODO: Maybe verify this or try catch? idk
+                    let obj = JSON.parse(packageData)
+
+                    //Get the path and directory
+                    let path = item.replace(/\\/g, "/");
+                    let dir = splitAt(path.lastIndexOf("/"))(path)[0] + '/'
+                    //Check if the package file has a name and main runtime
+                    if (obj.hasOwnProperty("name") && obj.hasOwnProperty("main")) {
+                        let mainFile = dir + obj.main //If so get the path and file
+                        if (!await doesExist(mainFile)) { //A
+                            console.log(chalk`{green [Fabritect]} No main file found!`)
+                        }
+                        //Get the name of the object
+                        let name = obj.name
+                        //If name hasn't already been used in the group, make it!
+                        if (self.g[g].m[name] == null) {
+                            self.g[g].m[name] = {}
+                            self.g[g].m[name].p = obj //Package
+                            self.g[g].m[name].d = dir //Set it to the plugin
+                            self.g[g].m[name].sI = {}
+                            self.g[g].m[name].sT = {}
+
+                            //Now check if it has all version and consumes in the file.
+                            let hasFab = obj.hasOwnProperty("fabritect")
+                            let hasVer = obj.hasOwnProperty("version")
+                            let hasConsumes = hasFab ? obj.fabritect.hasOwnProperty("consumes") : false
+                            if (hasFab && hasConsumes && hasVer) {
+                                let ver = obj.version
+                                //Make consumes more object usable
+                                let con = formatConsumes(obj.fabritect.consumes)
+
+                                //Set a name (used by tree display)
+                                self.g[g].m[name].f = `${g}@${name}#${ver}`
+                                self.g[g].m[name].con = con //All of the consumables
+                                self.g[g].m[name].c = null //The code
+                                //Now lets read the file!
+                                fs.readFile(mainFile, 'utf8', (err, data) => {
+                                    if (err) {
+                                        console.log(err)
+                                        self.g[g].m[name].c = ""
+                                    }
+                                    //Set the file to ram
+                                    self.g[g].m[name].c = data
+                                    //Resolve the entire loading process
+                                    resolve(true)
+                                });
+                            } else {
+                                reject(chalk`{green [Fabritect]} {red Module invalid package! (version, fabritect, consumes) (${item})}`)
+                            }
+                        } else {
+                            reject(chalk`{green [Fabritect]}{red Name already in use! (${item})}`)
+                        }
+                    } else {
+                        reject(chalk`{green [Fabritect]} {red Module has no name defined in package! (${item})}`)
+                    }
+                })
+            }).catch((error) => {
+                console.log(error)
+                process.exit(1);
+            })
+        }
+        //Wrapper for loading the files async, just making sure that it really exists.
+        let _loadFile = async (item) => {
+            if (await doesExist(item)) {
+                return loadFileAsync(item)
+            }
+            return false
+        }
+
         let _loadFolder = async (folder) => {
             return new Promise(async (resolve) => {
                 if (await doesExist(folder)) {
                     let files = await getPackages(folder)
-                    files.map(async (item) => {
-                        if (await doesExist(item)) {
-                            fs.readFile(item, 'utf8', async (err, packageData) => {
-                                let obj = JSON.parse(packageData)
-                                let path = item.replace(/\\/g, "/");
-                                let dir = splitAt(path.lastIndexOf("/"))(path)[0] + '/'
-                                if (obj.hasOwnProperty("name") && obj.hasOwnProperty("main")) {
-                                    let mainFile = dir + obj.main
-                                    if (!doesExist(mainFile)) {
-                                        console.log("No main file")
-                                    }
-                                    let name = obj.name
-                                    if (self.g[g].m[name] == null) {
-                                        self.g[g].m[name] = {}
-                                        self.g[g].m[name].p = obj //Package
-                                        self.g[g].m[name].d = dir //Set it to the plugin
-                                        self.g[g].m[name].sI = {}
-                                        self.g[g].m[name].sT = {}
-
-
-                                        let hasFab = obj.hasOwnProperty("fabritect")
-                                        let hasVer = obj.hasOwnProperty("version")
-                                        let hasConsumes = hasFab ? obj.fabritect.hasOwnProperty("consumes") : false
-                                        if (hasFab && hasConsumes && hasVer) {
-                                            let ver = obj.version
-                                            let con = formatConsumes(obj.fabritect.consumes)
-
-                                            self.g[g].m[name].f = `${g}@${name}#${ver}`
-                                            self.g[g].m[name].con = con
-                                            self.g[g].m[name].c = null
-                                            console.log(mainFile)
-                                            fs.readFile(mainFile, 'utf8', (err, data) => {
-                                                if (err) { console.log(err) 
-                                                    self.g[g].m[name].c = ""
-                                                }
-                                                self.g[g].m[name].c = data
-                                                console.log(data)
-                                                let pass = true
-                                                for (let module_ in self.g[g].m) {
-                                                    pass = self.g[g].m[name].c == null ? false : pass; 
-                                                }
-                                                if (pass) {
-                                                    resolve(true)
-                                                }
-                                            });
-                                        } else {
-                                            console.log(`Can not load ${group}@${name}`)
-                                        }
-                                    }
-                                } else {
-                                    console.log("has no name")
-                                }
-                            })
-                        }
+                    Promise.all(files.map(_loadFile)).then(() => {
+                        resolve(true)
+                    }).catch((error) => {
+                        console.log(error)
+                        process.exit(1);
                     })
                 } else {
                     console.log(`${folder} is not a valid folder...`);
                 }
-            }).catch(() => {
-
+            }).catch((error) => {
+                console.log(error)
+                process.exit(1);
             })
+
         }
         let instance = {
-            async loadFolder(folder) {
-                return _loadFolder(folder)
+            loadFolder(folder) {
+                self.loadWaiting.push(_loadFolder(folder))
             },
         }
         if (this.g[g] == null) {
@@ -172,56 +191,106 @@ module.exports = class Fabritect extends EventEmitter {
         let out = chalk`{${color} [${group.toUpperCase()}]} [${name}] ${message}`
         console.log(out)
     }
+    /**
+     * getServices - Get the list of services that are offered to this module
+     * TODO: Add a proxy for invalid imports, throw an error?
+     * @param {String} group 
+     * @param {String} name 
+     */
     getServices(group, name) {
+        //Check if its a real module
         if (this.isModule(group, name)) {
+            //TODO: Make this more than just global sections
             let sections = ["GLOBAL"]
+            if (this.g[group].o.hasOwnProperty("sections")) {
+                for (let _section in this.g[group].o.sections) {
+                    sections.push(this.g[group].o.sections[_section])
+                }
+            }
+            //List of all services that will be returned
             let services = {}
+            //All of the consumables that this module uses
             let consumes = this.g[group].m[name].con
+            //Loop it
             for (let _group in consumes) {
+                //At the object to the object as an object (is that confusing?)
                 services[_group] = {}
+                //Loop the modules in each group
                 for (let _module in consumes[_group]) {
+                    //Also create that object
                     services[_group][_module] = {}
+                    //Loop all of the sections from each group
+                    //TODO: Like said before, still needs to be worked on
                     for (let _section in sections) {
-                        let local = { "_": {} }
+                        //Make a local services for this section for only the consumed module
+                        let local = {}
+                        //Reference of this class 
+                        //TODO: Change to "self"
                         let _ = this
-                        console.log("Eeee")
-                        console.log(JSON.stringify(this.g[_group].m[_module].s))
-                        for (let service in this.g[_group].m[_module].s[sections[_section]]) {
-                            console.log(chalk`{red Hi}`)
-                            local[service] = function () {
-                                var args = Array.prototype.slice.call(arguments);
-                                args.unshift(name);
-                                args.unshift(group);
-                                let a = () => {
-                                    throw "[Fabritect] Invalid Function Call"
-                                }
-                                if (_.g[_group].m[_module].s[_section][service].hasOwnProperty("load")) {
-                                    a = _.g[_group].m[_module].s[_section][service].load.apply(this, args);
-                                } else {
-                                    a = _.g[_group].m[_module].s[_section][service].apply(this, args);
-                                }
-                                if (a) {
-                                    return a
+                        //Loop all servics in the "register" object
+                
+                        if (this.g[_group].m[_module].s.hasOwnProperty(sections[_section])) {
+                            for (let service in this.g[_group].m[_module].s[sections[_section]]) {
+                                //Create a local function which will be referenced
+                                local[service] = function () {
+                                    //Grab all arguments from the object
+                                    var args = Array.prototype.slice.call(arguments);
+                                    //Create some info for this module when it calls another module
+                                    //TODO: Add more infomaton
+                                    let info = {
+                                        name,
+                                        group
+                                    }
+                                    //Add it to the arguments
+                                    args.unshift(info);
+                                    //Defined returnable (the function that gets called on)
+                                    let returnable = () => {
+                                        //THis should never be called, but if so throw an error
+                                        throw "[Fabritect] Invalid Function Call"
+                                    }
+                                    //First lets check if this function uses the "load/unload" system.
+                                    if (_.g[_group].m[_module].s[sections[_section]][service].hasOwnProperty("load")) {
+                                        //If so, apply the arguments to this
+                                        returnable = _.g[_group].m[_module].s[sections[_section]][service].load.apply(this, args);
+                                    } else {
+                                        //If not, just run this function directly
+                                        returnable = _.g[_group].m[_module].s[sections[_section]][service].apply(this, args);
+                                    }
+                                    //If returnable is real?
+                                    if (returnable) {
+                                        //Return returnable
+                                        return returnable
+                                    }
                                 }
                             }
-                        }
-                        if (sections[_section] == "GLOBAL") {
-                            services[_group][_module] = Object.assign(local, services[_group][_module])
-                        } else {
-                            if (services[_group][_module]._[_section] == null) {
-                                services[_group][_module]._[_section] = {}
+                            //Now apply the SERVICES to the entire module
+                            if (sections[_section] == "GLOBAL") {
+                                services[_group][_module] = { ...local, ...services[_group][_module] }
+                            } else {
+                                if (services[_group][_module]["_"] == null) {
+                                    services[_group][_module]._ = {}
+                                }
+                                if (!services[_group][_module]._.hasOwnProperty(sections[_section])) {
+                                    services[_group][_module]._[sections[_section]] = {}
+                                }
+                                services[_group][_module]._[sections[_section]] = local
                             }
-                            services[_group][_module]._[_section] = local
                         }
                     }
                 }
             }
+            //Return all of the services allowed
             return services
         }
     }
+    /**
+     * run - Runs code asynchronously
+     * @param {String} group 
+     * @param {String} name 
+     * @param {String} code 
+     */
     async run(group, name, code) {
         return new Promise((resolve) => {
-            console.log(`${group}:${name}`)
             let groupOptions = this.g[group].o
 
             //Custom Console to pass onto a MODULE
@@ -251,7 +320,7 @@ module.exports = class Fabritect extends EventEmitter {
                 this.g[group].m[name].sT.push(timeout)
             }
 
-            let _ = this
+            let self = this
             //Runtime Environment (mounting and ending)
 
             //Runtime Environment for module
@@ -261,72 +330,40 @@ module.exports = class Fabritect extends EventEmitter {
                  * - Used for getting other imports from other 
                  */
                 onMount: (callback) => {
-                    console.log("onMount")
-                    let imports = _.getServices(group, name)
-                    //Callback!
+
+                    let imports = self.getServices(group, name)
 
                     let register = (services) => {
-                        _.g[group].m[name].s = services
-                        console.log("resolve")
+                        self.g[group].m[name].s = services
+                        //Resolve here rather then end (below) because of 
+                        //Now all will resolve it directly in the main function of a module
                         resolve(true)
                     }
                     callback(imports, register)
-                    //TODO: Verify reigster correlation?
-
                 },
                 /**
                  * GetGroups - Return a array of groups that are loaded
                  */
                 getGroup: () => {
-                    //TODO
+                    //TODO: get the groups
                 },
                 /**
                  * End - End of the module loading process. Injected automatically by code
                  */
                 end() {
-                    //resolve(true)
-                    if (_.g[group].m[name].e == null) {
-                        _.g[group].m[name].e = ((process.hrtime(startTime)[0] * 1000) + (process.hrtime(startTime)[1] / 1000000)).toFixed(3)
+                    //End of the function gives time...
+                    if (self.g[group].m[name].e == null) {
+                        self.g[group].m[name].e = timeDiff(startTime)
                     }
                 }
             }
             //Global prefix
             let id = this.p
             //Code Structure
-            let newCode = `module.exports = function(require, console, include, ${id}, setInterval, setTimeout) { 
-                var indexedDB = null;
-                var location = null;
-                var navigator = null;
-                var onerror = null;
-                var onmessage = null;
-                var performance = null;
-                var self = null;
-                var webkitIndexedDB = null;
-                var postMessage = null;
-                var close = null;
-                var openDatabase = null;
-                var openDatabaseSync = null;
-                var webkitRequestFileSystem = null;
-                var webkitRequestFileSystemSync = null;
-                var webkitResolveLocalFileSystemSyncURL = null;
-                var webkitResolveLocalFileSystemURL = null;
-                var addEventListener = null;
-                var dispatchEvent = null;
-                var removeEventListener = null;
-                var dump = null;
-                var onoffline = null;
-                var ononline = null;
-                var importScripts = null;
-                var application = null;
-                let process = null;
-                let exports = null;
-                let __dirname = null;
-                //let eval = null
-                console.log("RAN")
+            let newCode = `module.exports = function(require, console, include, ${id}, setInterval, setTimeout) { var __dirname = null;var __filename = null;var global = null;var process = null;var exports = null;var TextDecoder = null;var TextEncoder = null;var WebAssembly = null;var URL = null;var URLSearchParams = null;
                 return () => {
                     ${code}
-                    ${id}.end();
-                } 
+                    ${id}.end();} 
             }`;
             let include = null
             //validate the code (constructor.constructor)
@@ -338,7 +375,7 @@ module.exports = class Fabritect extends EventEmitter {
                 //Run the code. (make the environment)
                 let launchCode = eval(compiled);
                 //Make the log system
-                let log = { log: (message) => { this.log(group, name, message) } }
+                let log = { log: (message) => { this.log(group, name, message) }, logX: (message) => {console.log(message)} }
                 //Launch the code
                 launchCode(customRequire,
                     log,
@@ -346,8 +383,7 @@ module.exports = class Fabritect extends EventEmitter {
                     runtime,
                     customInterval,
                     customTimeout)()
-                console.log("Im donw")
-                console.log(newCode)
+
 
             } else {
                 console.log(`Invalid Syntax in: ${group}:${name}`)
@@ -400,6 +436,7 @@ module.exports = class Fabritect extends EventEmitter {
             //Now wait for the plugins to load (as they are async)
             await waitForLevel(_level)
         }
+        console.log(timeDiff(startTime))
     }
     /**
      * buildLoadingScheme - Builds the loading scheme
@@ -464,13 +501,19 @@ module.exports = class Fabritect extends EventEmitter {
                         if (!levels.hasOwnProperty(_group)) {
                             levels[_group] = {} //If not make it
                         }
+                        let temp = level
                         //Keep a note of the highest level, useful for getting the loadingScheme
                         if (level > highest) {
                             highest = level
                         }
+                        if (levels[_group][_module] != null) {
+                            if (levels[_group][_module] > level) {
+                                temp = levels[_group][_module]
+                            }
+                        }
                         //Apply the level to the object
                         //Also this would be over written if found higher down the tree
-                        levels[_group][_module] = level
+                        levels[_group][_module] = temp
                         goLower(_group, _module, level) //Check if this module has consumables.
                     }
                     //If not real ,don't add it to the array, it just won't be loaded. In reality something with break anyways.
@@ -481,9 +524,13 @@ module.exports = class Fabritect extends EventEmitter {
         for (let _group in this.g) {
             levels[_group] = {}
             for (let _module in this.g[_group].m) {
-                levels[_group][_module] = 1 //Starts at level 1
+                let level = 1
+                if (levels[_group][_module] == null)
+                    levels[_group][_module] = 1 //Starts at level 1
+                else(levels[_group][_module] > 1)
+                    level = levels[_group][_module]
                 let obj = this.g[_group].m[_module]
-                goLower(_group, _module, 1) //level 1
+                goLower(_group, _module, level) //level 1
             }
         }
         return [levels, highest]
@@ -555,17 +602,24 @@ module.exports = class Fabritect extends EventEmitter {
      * start - Starts the "code execution" of a plugin
      */
     start() {
-        Promise.all(this.l)
+        //Wait for all files to load...
+        Promise.all(this.loadWaiting)
             .then(() => {
+                //Shows the tree of consume
                 this.displayConsumeTree()
+                //Now create the levels
                 let [levels, highest] = this.createLevelTree()
+          
+                //Creates a schematic from the levels
                 let scheme = this.buildLoadingScheme(levels, highest)
-                console.log(JSON.stringify(scheme))
+       
+                //Loads the schematic and run code!
                 this.attemptToLoad(scheme)
             })
             .catch((error) => {
                 console.log(error)
                 console.log("Failed to start, no loadings...")
             });
+        console.log(timeDiff(startTime))
     }
 }

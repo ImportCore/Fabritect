@@ -16,8 +16,6 @@ let plugins = fab.createGroup("plugins", {
         proto: false
     }
 })
-let run = async() => {
-    await app.loadFolder("app")
-    await plugins.loadFolder("plugins")
-    fab.start()
-}
+app.loadFolder("app")
+plugins.loadFolder("plugins")
+fab.start()
