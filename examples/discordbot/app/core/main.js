@@ -1,9 +1,11 @@
-console.log("LOADED CORE")
-Plugin.onMount((imports, register) => {
 
+let token = "?"
+Plugin.onMount((imports, register) => {
+    console.log("LOADED CORE")
     //Load discord.js
     const Discord = require('discord.js');
     const client = new Discord.Client();
+
 
     //Also get a request lib ready for use
     const { get } = require('snekfetch');
@@ -12,8 +14,7 @@ Plugin.onMount((imports, register) => {
     client.on('ready', () => {
         console.log(`Logged in as ${client.user.tag}!`);
     });
-    //Login the client with an bot token (probably should be a .env file but whatever)
-    client.login("token")
+    client.login(token)
     //Register services
     register({
         //Global
@@ -24,7 +25,6 @@ Plugin.onMount((imports, register) => {
             },
             //Shows an image via a discord rich embed
             makeImage: (info, url) => {
-                console.log(url)
                 const embed = new Discord.RichEmbed()
                 .setImage(url)
                 return embed

@@ -5,7 +5,7 @@ Plugin.onMount((imports, register) => {
     let command = imports.app.command
     //Grab fetch from the core
     let fetch = imports.app.core.getFetch()
-
+    let { createChannel } = imports.app.guild
 
 
 
@@ -16,7 +16,20 @@ Plugin.onMount((imports, register) => {
     command.newCommand("ping", (message) => {
         message.reply("PONG")
     })
-    command.newCommand("cat", (message) => {
+    command.newCommand("cheese", (message) => {
+        message.channel.send("I SMEELLLL CHEESE :cheese:")
+    })
+    command.newCommand("channel", (message, cmd, guild) => {
+        console.log(cmd[2])
+        createChannel(guild, cmd[2], (out) => {
+            if (out == true) {
+                message.channel.send("CREATE CHANNEL")
+            } else {
+                message.channel.send(out.stack)
+            }
+        })
+    })
+    command.newCommand("cat", (message, guild) => {
         try {
             fetch('https://aws.random.cat/meow').then(res => {
                 let embed = imports.app.core.makeImage(res.body.file)

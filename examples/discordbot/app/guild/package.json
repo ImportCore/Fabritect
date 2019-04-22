@@ -1,5 +1,5 @@
 {
-  "name": "example",
+  "name": "guild",
   "version": "1.0.0",
   "description": "An example plugin",
   "main": "main.js",
@@ -8,9 +8,7 @@
   "fabritect": {
     "for": ["Observo"],
     "consumes": {
-      "app@command": "1.0.0",
-      "app@core": "1.0.0",
-      "app@guild": "1.0.0"
+      "app@core": "1.0.0"
     }
   }
 }

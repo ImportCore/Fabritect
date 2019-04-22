@@ -7,7 +7,7 @@ Plugin.onMount((imports, register) => {
 
     //Create the message handler
     client.on("message", (message) => {
-
+        
         //Check if a prefix is found on the message
         if (message.content.startsWith("!")) {
             //Remove the prefix and split at space
@@ -17,7 +17,7 @@ Plugin.onMount((imports, register) => {
                 //If so, also check if the command is found
                 if (commands[cmd[0]].hasOwnProperty(cmd[1])) {
                     //If so run the callback from the command.
-                    commands[cmd[0]][cmd[1]](message)
+                    commands[cmd[0]][cmd[1]](message, cmd, message.guild.id)
                 }
             }
         }
