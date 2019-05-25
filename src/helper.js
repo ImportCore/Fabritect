@@ -10,6 +10,7 @@ const findAny = (string, list) => {
 const splitAt = index => x => [x.slice(0, index), x.slice(index)]
 
 const fs = require("fs")
+//Does a file exist, but promised based
 const doesExist = async (file) => {
     return new Promise((resolve) => {
         fs.access(file, fs.F_OK, (err) => {
@@ -21,6 +22,7 @@ const doesExist = async (file) => {
     })
 }
 const glob = require("glob")
+//Get packages but promised based on a single folder (within sub folders)
 const getPackages = async (path) => {
     return new Promise((resolve) => {
         glob(`${path}/*/package.json`, function (er, files) {
@@ -28,9 +30,20 @@ const getPackages = async (path) => {
         })
     })
 }
+//Get a single package from a single sub folder (directly)
+const getPackage = async (path) => {
+    return new Promise((resolve) => {
+        glob(`${path}/package.json`, function (er, files) {
+            resolve(files)
+        })
+    })
+}
+//Find a time difference
 const timeDiff = (startTime) => {
     return ((process.hrtime(startTime)[0] * 1000) + (process.hrtime(startTime)[1] / 1000000)).toFixed(3)
 }
+//Format the consumes array
+//TODO: Make it error proof?
 let formatConsumes = (consumes) => {
     let list = {}
     for (let item in consumes) {
@@ -44,12 +57,13 @@ let formatConsumes = (consumes) => {
     return list
 }
 
-//Export it
+//Export All Functions
 module.exports = {
     findAny,
     splitAt,
     doesExist,
     getPackages,
+    getPackage,
     timeDiff,
     formatConsumes
 }

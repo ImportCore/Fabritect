@@ -7,14 +7,16 @@
  */
 
 
-const fs = require("fs")
-const EventEmitter = require("events").EventEmitter;
+const fs = require('fs')
+const EventEmitter = require('events').EventEmitter;
 const treeify = require('treeify');
-const startTime = process.hrtime()
 const chalk = require('chalk');
+const path = require('path')
 
-let { splitAt, doesExist, getPackages, timeDiff, formatConsumes } = require("./helper")
+const startTime = process.hrtime()
 
+let { splitAt, doesExist, getPackages, getPackage, timeDiff, formatConsumes } = require("./helper")
+let validator = require("./validator")
 
 
 //Make Class
@@ -36,21 +38,22 @@ module.exports = class Fabritect extends EventEmitter {
      * @param {String} code [Code] code of module
      */
     _transform(g, n, code) {
+        code = `//# sourceURL=${g.toUpperCase()}.${n.toUpperCase()}.\n${code}`
         //Check if its a real group 
+        /*
         if (this._isGroup(g)) {
             //Check that it has a compiler method
-            if (g[group].hasOwnProperty("c")) {
-                code = this.g[group].c(g, n, code)
+            if (this.g[g].hasOwnProperty("compile")) {
+                code = this.g[g].c(g, n, code)
             }
         }
         //Global Compiler
         code = this.c(g, n, code)
-    }
-    _transform(group, name, code) {
-        return `//# sourceURL=${group.toUpperCase()}.${name.toUpperCase()}.\n${code}`
+        */
+        return code;
     }
     _validate(group, name, code) {
-        return true
+        return validator(code)
     }
     /**
      * 
@@ -76,8 +79,8 @@ module.exports = class Fabritect extends EventEmitter {
                     let obj = JSON.parse(packageData)
 
                     //Get the path and directory
-                    let path = item.replace(/\\/g, "/");
-                    let dir = splitAt(path.lastIndexOf("/"))(path)[0] + '/'
+                    let _path = item.replace(/\\/g, "/");
+                    let dir = splitAt(_path.lastIndexOf("/"))(_path)[0] + '/'
                     //Check if the package file has a name and main runtime
                     if (obj.hasOwnProperty("name") && obj.hasOwnProperty("main")) {
                         let mainFile = dir + obj.main //If so get the path and file
@@ -158,17 +161,47 @@ module.exports = class Fabritect extends EventEmitter {
                 console.log(error)
                 process.exit(1);
             })
-
         }
+        /**
+         * loadPackage - Loads a single module within a specific directory
+         * - Module is added is awaited from loadFile
+         * 
+         * BEFORE START
+         * 
+         * @param {String} directory 
+         */
+        let _loadPackage = async (directory) => {
+            return new Promise(async (resolve) => {
+                if (await doesExist(directory)) {
+                    let _package = await getPackage(directory)
+                    console.log(`PACKAGE: ${_package}`)
+                    await _loadFile(_package[0])
+                    resolve(true)
+                } else {
+                    console.log(`${directory} is not a valid pacakge...`);
+                }
+            }).catch((error) => {
+                console.log(error)
+                process.exit(1);
+            })
+        }
+        //Instance of "createFolder", or what is returned
         let instance = {
-            loadFolder(folder) {
-                self.loadWaiting.push(_loadFolder(folder))
+            loadFolder(directory) {
+                //TODO: Check if waiting for load isn't occuring (start has been called).
+                //if so, check if needed modules are installed (TODO: Check versions)
+                self.loadWaiting.push(_loadFolder(directory))
             },
+            loadModule(directory) {
+                self.loadWaiting.push(_loadPackage(directory))
+            }
         }
         if (this.g[g] == null) {
             this.g[g] = {} //Make the object for the group
             this.g[g].o = options //Set the options
             this.g[g].m = {} //Modules in this group
+            this.g[g].d = path.join(__dirname, "../../../").replace(/\\/g, "\\\\"); //Modules in this group
+            console.log(this.g[g].d)
             this.g[g].c = (g_, n_, code) => { return code } //Add the compiler callback
             let i = instance //Get the instance (local)
 
@@ -178,7 +211,7 @@ module.exports = class Fabritect extends EventEmitter {
         return null
     }
     /**
-     * 
+     * log - A custom log
      * @param {String} g 
      * @param {String} n 
      * @param {String} code 
@@ -227,8 +260,8 @@ module.exports = class Fabritect extends EventEmitter {
                         //Reference of this class 
                         //TODO: Change to "self"
                         let _ = this
-                        //Loop all servics in the "register" object
-                
+                        //Loop all services in the "register" object
+
                         if (this.g[_group].m[_module].s.hasOwnProperty(sections[_section])) {
                             for (let service in this.g[_group].m[_module].s[sections[_section]]) {
                                 //Create a local function which will be referenced
@@ -360,11 +393,7 @@ module.exports = class Fabritect extends EventEmitter {
             //Global prefix
             let id = this.p
             //Code Structure
-            let newCode = `module.exports = function(require, console, include, ${id}, setInterval, setTimeout) { var __dirname = null;var __filename = null;var global = null;var process = null;var exports = null;var TextDecoder = null;var TextEncoder = null;var WebAssembly = null;var URL = null;var URLSearchParams = null;
-                return () => {
-                    ${code}
-                    ${id}.end();} 
-            }`;
+            let newCode = `module.exports = function(require, console, include, ${id}, setInterval, setTimeout) { var __root = "${self.g[group].d}"; var __name = "${name}"; var __group = "${group}"; var __dirname = null;var __filename = null;var global = null;var process = null;var exports = null;var TextDecoder = null;var TextEncoder = null;var WebAssembly = null;var URL = null;var URLSearchParams = null; return () => {${code}; ${id}.end();}}`;
             let include = null
             //validate the code (constructor.constructor)
             //transform the code (both global and based on each)
@@ -375,7 +404,7 @@ module.exports = class Fabritect extends EventEmitter {
                 //Run the code. (make the environment)
                 let launchCode = eval(compiled);
                 //Make the log system
-                let log = { log: (message) => { this.log(group, name, message) }, logX: (message) => {console.log(message)} }
+                let log = { log: (message) => { this.log(group, name, message) }, logX: (message) => { console.log(message) } }
                 //Launch the code
                 launchCode(customRequire,
                     log,
@@ -527,8 +556,8 @@ module.exports = class Fabritect extends EventEmitter {
                 let level = 1
                 if (levels[_group][_module] == null)
                     levels[_group][_module] = 1 //Starts at level 1
-                else(levels[_group][_module] > 1)
-                    level = levels[_group][_module]
+                else (levels[_group][_module] > 1)
+                level = levels[_group][_module]
                 let obj = this.g[_group].m[_module]
                 goLower(_group, _module, level) //level 1
             }
@@ -609,10 +638,10 @@ module.exports = class Fabritect extends EventEmitter {
                 this.displayConsumeTree()
                 //Now create the levels
                 let [levels, highest] = this.createLevelTree()
-          
+
                 //Creates a schematic from the levels
                 let scheme = this.buildLoadingScheme(levels, highest)
-       
+
                 //Loads the schematic and run code!
                 this.attemptToLoad(scheme)
             })

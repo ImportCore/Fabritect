@@ -7,7 +7,7 @@
 
 let { findAny } = require("./helper")
 
-module.exports = () => {
+module.exports = (code) => {
     //Find list of strings, in a string
 
     //Check if we have the list of unwanted accesses in the code
