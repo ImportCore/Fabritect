@@ -6,27 +6,39 @@
  * @license MIT
  */
 
-
+require('console-stamp')(console,
+    {
+        label: false,
+        metadata: function () {
+            return ('[' + (process.memoryUsage().heapUsed / (1024 * 1024)).toFixed(2) + 'mb]');
+        },
+        colors: {
+            stamp: 'yellow',
+            metadata: 'green'
+        }
+    }
+);
+const vm = require('vm');
 const fs = require('fs')
 const EventEmitter = require('events').EventEmitter;
 const treeify = require('treeify');
 const chalk = require('chalk');
+const util = require('util');
 const path = require('path')
-
+var parseError = require('parse-error');
 const startTime = process.hrtime()
-
+const { codeFrameColumns } = require("@babel/code-frame")
 let { splitAt, doesExist, getPackages, getPackage, timeDiff, formatConsumes } = require("./helper")
 let validator = require("./validator")
-
 
 //Make Class
 module.exports = class Fabritect extends EventEmitter {
     constructor(prefix = "Plugin") {
         super()
-        this.loadWaiting = [] //List of loaded async modules
-        this.p = prefix //Prefix for modules
-        this.g = {} //Group Object
-        this.c = (g, n, code) => { return code }
+        this.groupWaiting = {}
+        this.prefix = prefix //Prefix for modules
+        this.group = {} //Group Object
+        this.compile = (g, n, code) => { return code }
     }
     _isGroup(group) {
         return g.hasOwnProperty(group)
@@ -38,13 +50,13 @@ module.exports = class Fabritect extends EventEmitter {
      * @param {String} code [Code] code of module
      */
     _transform(g, n, code) {
-        code = `//# sourceURL=${g.toUpperCase()}.${n.toUpperCase()}.\n${code}`
+        code = `//# sourceURL=${g.toUpperCase()}|${n.toUpperCase()}\n${code}`
         //Check if its a real group 
         /*
         if (this._isGroup(g)) {
             //Check that it has a compiler method
-            if (this.g[g].hasOwnProperty("compile")) {
-                code = this.g[g].c(g, n, code)
+            if (this.group[g].hasOwnProperty("compile")) {
+                code = this.group[g].c(g, n, code)
             }
         }
         //Global Compiler
@@ -52,19 +64,21 @@ module.exports = class Fabritect extends EventEmitter {
         */
         return code;
     }
+    /**
+     * Validate - Validates code
+     * @param group 
+     * @param name 
+     * @param code 
+     */
     _validate(group, name, code) {
         return validator(code)
     }
     /**
-     * 
+     * createGroup - Creates a group
      * @param {*} name 
      * @param {*} settings 
      */
-    createGroup(g, options) {
-        /**
-         * isFolder - Checks if a thing is a folder, async
-         * @param {String} folder 
-         */
+    createGroup(group, options) {
         let self = this
         /**
          * loadFileAsync - Loads the package file async and the code file async and adds all information to group object
@@ -90,12 +104,13 @@ module.exports = class Fabritect extends EventEmitter {
                         //Get the name of the object
                         let name = obj.name
                         //If name hasn't already been used in the group, make it!
-                        if (self.g[g].m[name] == null) {
-                            self.g[g].m[name] = {}
-                            self.g[g].m[name].p = obj //Package
-                            self.g[g].m[name].d = dir //Set it to the plugin
-                            self.g[g].m[name].sI = {}
-                            self.g[g].m[name].sT = {}
+                        if (self.group[group].module[name] == null) {
+                            self.group[group].module[name] = {}
+                            self.group[group].module[name].p = obj //Package
+                            self.group[group].module[name].directory = dir //Set it to the plugin
+                            self.group[group].module[name].file = path.resolve(mainFile) //Set it to the plugin
+                            self.group[group].module[name].sI = {}
+                            self.group[group].module[name].sT = {}
 
                             //Now check if it has all version and consumes in the file.
                             let hasFab = obj.hasOwnProperty("fabritect")
@@ -107,17 +122,17 @@ module.exports = class Fabritect extends EventEmitter {
                                 let con = formatConsumes(obj.fabritect.consumes)
 
                                 //Set a name (used by tree display)
-                                self.g[g].m[name].f = `${g}@${name}#${ver}`
-                                self.g[g].m[name].con = con //All of the consumables
-                                self.g[g].m[name].c = null //The code
+                                self.group[group].module[name].f = `${group}@${name}#${ver}`
+                                self.group[group].module[name].con = con //All of the consumables
+                                self.group[group].module[name].c = null //The code
                                 //Now lets read the file!
                                 fs.readFile(mainFile, 'utf8', (err, data) => {
                                     if (err) {
                                         console.log(err)
-                                        self.g[g].m[name].c = ""
+                                        self.group[group].module[name].c = ""
                                     }
                                     //Set the file to ram
-                                    self.g[g].m[name].c = data
+                                    self.group[group].module[name].c = data
                                     //Resolve the entire loading process
                                     resolve(true)
                                 });
@@ -190,22 +205,25 @@ module.exports = class Fabritect extends EventEmitter {
             loadFolder(directory) {
                 //TODO: Check if waiting for load isn't occuring (start has been called).
                 //if so, check if needed modules are installed (TODO: Check versions)
-                self.loadWaiting.push(_loadFolder(directory))
+                self.groupWaiting[group] = _loadFolder(directory)
             },
             loadModule(directory) {
-                self.loadWaiting.push(_loadPackage(directory))
+                self.groupWaiting[group] = _loadPackage(directory)
+            },
+            isGroup: true,
+            getName() {
+                return group
             }
         }
-        if (this.g[g] == null) {
-            this.g[g] = {} //Make the object for the group
-            this.g[g].o = options //Set the options
-            this.g[g].m = {} //Modules in this group
-            this.g[g].d = path.join(__dirname, "../../../").replace(/\\/g, "\\\\"); //Modules in this group
-            console.log(this.g[g].d)
-            this.g[g].c = (g_, n_, code) => { return code } //Add the compiler callback
+        if (this.group[group] == null) {
+            this.group[group] = {} //Make the object for the group
+            this.group[group].options = options //Set the options
+            this.group[group].module = {} //Modules in this group
+            this.group[group].directory = path.join(__dirname, "../../../").replace(/\\/g, "\\\\"); //Modules in this group
+            this.group[group].compile = (g_, n_, code) => { return code } //Add the compiler callback
             let i = instance //Get the instance (local)
 
-            this.g[g].i = i //Set the intstance
+            this.group[group].i = i //Set the intstance
             return i //Return the instance
         }
         return null
@@ -218,8 +236,11 @@ module.exports = class Fabritect extends EventEmitter {
      */
     log(group, name, message) {
         let color = "green"
-        if (this.g[group].o.hasOwnProperty("color")) {
-            color = this.g[group].o.color
+        if (this.group[group].options.hasOwnProperty("color")) {
+            color = this.group[group].options.color
+        }
+        if (typeof message === "object") {
+            message = util.inspect(message, false, null, true)
         }
         let out = chalk`{${color} [${group.toUpperCase()}]} [${name}] ${message}`
         console.log(out)
@@ -231,90 +252,63 @@ module.exports = class Fabritect extends EventEmitter {
      * @param {String} name 
      */
     getServices(group, name) {
-        //Check if its a real module
         if (this.isModule(group, name)) {
-            //TODO: Make this more than just global sections
-            let sections = ["GLOBAL"]
-            if (this.g[group].o.hasOwnProperty("sections")) {
-                for (let _section in this.g[group].o.sections) {
-                    sections.push(this.g[group].o.sections[_section])
-                }
+            let services = {
+                GLOBAL: {},
+                GROUP: {},
             }
-            //List of all services that will be returned
-            let services = {}
-            //All of the consumables that this module uses
-            let consumes = this.g[group].m[name].con
-            //Loop it
+            let consumes = this.group[group].module[name].con
             for (let _group in consumes) {
-                //At the object to the object as an object (is that confusing?)
-                services[_group] = {}
-                //Loop the modules in each group
+                services.GLOBAL[_group] = {}
                 for (let _module in consumes[_group]) {
-                    //Also create that object
-                    services[_group][_module] = {}
-                    //Loop all of the sections from each group
-                    //TODO: Like said before, still needs to be worked on
-                    for (let _section in sections) {
-                        //Make a local services for this section for only the consumed module
-                        let local = {}
-                        //Reference of this class 
-                        //TODO: Change to "self"
-                        let _ = this
-                        //Loop all services in the "register" object
-
-                        if (this.g[_group].m[_module].s.hasOwnProperty(sections[_section])) {
-                            for (let service in this.g[_group].m[_module].s[sections[_section]]) {
-                                //Create a local function which will be referenced
-                                local[service] = function () {
-                                    //Grab all arguments from the object
-                                    var args = Array.prototype.slice.call(arguments);
-                                    //Create some info for this module when it calls another module
-                                    //TODO: Add more infomaton
-                                    let info = {
-                                        name,
-                                        group
-                                    }
-                                    //Add it to the arguments
-                                    args.unshift(info);
-                                    //Defined returnable (the function that gets called on)
-                                    let returnable = () => {
-                                        //THis should never be called, but if so throw an error
-                                        throw "[Fabritect] Invalid Function Call"
-                                    }
-                                    //First lets check if this function uses the "load/unload" system.
-                                    if (_.g[_group].m[_module].s[sections[_section]][service].hasOwnProperty("load")) {
-                                        //If so, apply the arguments to this
-                                        returnable = _.g[_group].m[_module].s[sections[_section]][service].load.apply(this, args);
-                                    } else {
-                                        //If not, just run this function directly
-                                        returnable = _.g[_group].m[_module].s[sections[_section]][service].apply(this, args);
-                                    }
-                                    //If returnable is real?
-                                    if (returnable) {
-                                        //Return returnable
-                                        return returnable
-                                    }
-                                }
-                            }
-                            //Now apply the SERVICES to the entire module
-                            if (sections[_section] == "GLOBAL") {
-                                services[_group][_module] = { ...local, ...services[_group][_module] }
-                            } else {
-                                if (services[_group][_module]["_"] == null) {
-                                    services[_group][_module]._ = {}
-                                }
-                                if (!services[_group][_module]._.hasOwnProperty(sections[_section])) {
-                                    services[_group][_module]._[sections[_section]] = {}
-                                }
-                                services[_group][_module]._[sections[_section]] = local
-                            }
-                        }
+                    if (this.group[_group].module[_module].globalServices) {
+                        services.GLOBAL[_group][_module] = this.group[_group].module[_module].globalServices
+                    }
+                    if (this.group[_group].module[_module].groupServices && _group == group) {
+                        services.GROUP[_module] = this.group[_group].module[_module].groupServices
                     }
                 }
             }
-            //Return all of the services allowed
-            return services
+            let handler = {
+                get: function (target, key) {
+                    if (typeof target[key] === 'function') {
+                        return function () {
+                            //Grab all arguments from the object
+                            var args = Array.prototype.slice.call(arguments);
+                            //Create some info for this module when it calls another module
+                            //TODO: Add more infomaton
+                            let info = {
+                                name,
+                                group
+                            }
+                            //Add it to the arguments
+                            args.unshift(info);
+                            //Defined returnable (the function that gets called on)
+                            let returnable = () => {
+                                //THis should never be called, but if so throw an error
+                                throw "Error"
+                            }
+                            returnable = target[key].apply(this, args)
+                            //If returnable is real?
+                            if (returnable) {
+                                //Return returnable
+                                return returnable
+                            }
+                        }
+                    } if (target[key] != undefined) {
+                        return new Proxy(target[key], handler)
+                    } else {
+                        return target[key]
+                    }
+                },
+                set: function () {
+                    console.log("You cannot override services.")
+                }
+            }
+            var trappedServices = new Proxy(services, handler)
+            return trappedServices
         }
+        return null
     }
     /**
      * run - Runs code asynchronously
@@ -323,15 +317,35 @@ module.exports = class Fabritect extends EventEmitter {
      * @param {String} code 
      */
     async run(group, name, code) {
+        let self = this
+        let logError = (_code, err) => {
+            let json = parseError(err)
+            let lineStart = json.line
+            let lineCol = json.row
+            let filename = json.filename
+            if (filename != undefined) {
+                if (filename.includes("|")) {
+                    lineStart = lineStart - 1
+                }
+            }
+            if (json.filename == "main.js") {
+                console.log("??")
+            }
+
+            const location = { start: { line: lineStart, column: lineCol } };
+            const result = codeFrameColumns(_code, location, { highlightCode: true, forceColor: true });
+
+            self.log(group, name, chalk`\n{red {bold × ${self.group[group].module[name].file}: ${json.message} (${lineStart}:${lineCol})}} \n${result}`)
+
+        }
         return new Promise((resolve) => {
-            let groupOptions = this.g[group].o
+            let groupOptions = this.group[group].options
 
             //Custom Console to pass onto a MODULE
             let customRequire = (module) => { console.log(`REQURING of '${module}' is not allowed`) }
             if (groupOptions.require) {
                 customRequire = require
             }
-
             /**
              * customInterval - A normal interval that supports unloading
              * @param {Function} callback
@@ -340,7 +354,7 @@ module.exports = class Fabritect extends EventEmitter {
                 let interval = setInterval(() => {
                     callback()
                 }, time)
-                this.g[group].m[name].sI.push(interval)
+                this.group[group].module[name].sI.push(interval)
             }
             /**
              * customTimeout - A normal timeout that supports unloading
@@ -350,29 +364,39 @@ module.exports = class Fabritect extends EventEmitter {
                 let timeout = setTimeout(() => {
                     callback()
                 }, time)
-                this.g[group].m[name].sT.push(timeout)
+                this.group[group].module[name].sT.push(timeout)
             }
-
-            let self = this
             //Runtime Environment (mounting and ending)
-
-            //Runtime Environment for module
             let runtime = {
                 /**
                  * onMount - Plugin Mounts Here
                  * - Used for getting other imports from other 
                  */
                 onMount: (callback) => {
-
                     let imports = self.getServices(group, name)
 
-                    let register = (services) => {
-                        self.g[group].m[name].s = services
+                    let register = (_global = {}, _group = {}) => {
+                        self.group[group].module[name].globalServices = _global
+                        self.group[group].module[name].groupServices = _group
                         //Resolve here rather then end (below) because of 
                         //Now all will resolve it directly in the main function of a module
                         resolve(true)
                     }
-                    callback(imports, register)
+                    let isAsync = (func) => {
+                        const string = func.toString().trim();
+                        return !!(
+                            string.match(/^async /) ||
+                            string.match(/return _ref[^\.]*\.apply/)
+                        );
+                    }
+                    if (isAsync(callback)) {
+                        callback(imports, register).catch((err) => {
+                            logError(code, err)
+                        })
+                    } else {
+                        callback(imports, register)
+                    }
+
                 },
                 /**
                  * GetGroups - Return a array of groups that are loaded
@@ -385,40 +409,50 @@ module.exports = class Fabritect extends EventEmitter {
                  */
                 end() {
                     //End of the function gives time...
-                    if (self.g[group].m[name].e == null) {
-                        self.g[group].m[name].e = timeDiff(startTime)
+                    if (self.group[group].module[name].e == null) {
+                        self.group[group].module[name].e = timeDiff(startTime)
                     }
                 }
             }
+            if (groupOptions.allowFabritect) {
+                runtime.fabritect = self
+            }
             //Global prefix
-            let id = this.p
+            let prefix = this.prefix
             //Code Structure
-            let newCode = `module.exports = function(require, console, include, ${id}, setInterval, setTimeout) { var __root = "${self.g[group].d}"; var __name = "${name}"; var __group = "${group}"; var __dirname = null;var __filename = null;var global = null;var process = null;var exports = null;var TextDecoder = null;var TextEncoder = null;var WebAssembly = null;var URL = null;var URLSearchParams = null; return () => {${code}; ${id}.end();}}`;
+            let newCode = `${code}; ${prefix}.end()`;
             let include = null
-            //validate the code (constructor.constructor)
-            //transform the code (both global and based on each)
+            //Validate Code
             let safe = this._validate(group, name, code)
             if (safe) {
                 //Compiled the code
+                let log = { log: (message) => { this.log(group, name, message) } }
+
+                let opts = {
+                    require: customRequire,
+                    console: log,
+                    setInterval: customInterval,
+                    setTimeout: customTimeout,
+                    __root: self.group[group].directory,
+                    __name: name,
+                    __group: group
+                }
+                opts[prefix] = runtime
                 let compiled = this._transform(group, name, newCode)
+
                 //Run the code. (make the environment)
-                let launchCode = eval(compiled);
-                //Make the log system
-                let log = { log: (message) => { this.log(group, name, message) }, logX: (message) => { console.log(message) } }
-                //Launch the code
-                launchCode(customRequire,
-                    log,
-                    include,
-                    runtime,
-                    customInterval,
-                    customTimeout)()
-
-
+                try {
+                    //Make the log system
+                    //Launch the code
+                    let launchCode = vm.runInNewContext(compiled, opts);
+                } catch (err) {
+                    logError(code, err)
+                }
             } else {
                 console.log(`Invalid Syntax in: ${group}:${name}`)
             }
         }).catch((err) => {
-            console.log(err)
+            logError(code, err)
         })
     }
     /**
@@ -438,13 +472,18 @@ module.exports = class Fabritect extends EventEmitter {
          */
         let waitForLevel = (level) => {
             return new Promise(async (resolve) => {
+                if (parseInt(level) + 1 == scheme.length) {
+                    resolve(true)
+                }
                 Promise.all(loadingLevel[level])
                     .then(() => {
                         resolve(true)
                     })
                     .catch((error) => {
-                        console.log(chalk`{red} ${error}`)
+                        //TODO: Used Custom Error Handler
+                        console.log(chalk`{red ${error}}`)
                     });
+
             }).catch((err) => {
                 console.log(err)
             })
@@ -455,17 +494,20 @@ module.exports = class Fabritect extends EventEmitter {
                 for (let _module in scheme[_level][_group]) {
                     let _g = _group
                     let _n = scheme[_level][_group][_module]
-                    let code = this.g[_g].m[_n].c
+                    let code = this.group[_g].module[_n].c
                     if (loadingLevel[_level] == null) {
                         loadingLevel[_level] = []
                     }
-                    loadingLevel[_level].push(this.run(_group, scheme[_level][_group][_module], code))
+                    loadingLevel[_level].push(this.run(_group, scheme[_level][_group][_module], code).catch((err) => {
+                        console.log(chalk`{red {bold Error when running module: ${_group}:${_module}}}`)
+                    }))
                 }
             }
             //Now wait for the plugins to load (as they are async)
             await waitForLevel(_level)
+
         }
-        console.log(timeDiff(startTime))
+        return true
     }
     /**
      * buildLoadingScheme - Builds the loading scheme
@@ -513,7 +555,7 @@ module.exports = class Fabritect extends EventEmitter {
      * tree: Object of the tree with each level of each plugin
      * highest: The highest level of consumption. (first to be loaded)
      */
-    createLevelTree() {
+    createLevelTree(args) {
         //Consumable Levels
         let levels = {}
         //Highest Module (technically lowest, but first to be loaded)
@@ -522,8 +564,8 @@ module.exports = class Fabritect extends EventEmitter {
             //Bump the level, because if it gets called again (recursively)
             level++
             //Loop all groups and modules from CONSUMES (con)
-            for (let _group in this.g[group].m[mod].con) {
-                for (let _module in this.g[group].m[mod].con[_group]) {
+            for (let _group in this.group[group].module[mod].con) {
+                for (let _module in this.group[group].module[mod].con[_group]) {
                     //Check if its a real module       
                     if (this.isModule(_group, _module)) {
                         //Does levels have the group created?
@@ -550,16 +592,20 @@ module.exports = class Fabritect extends EventEmitter {
             }
         }
         //The start of finding the level tree. Loop all modules normally.
-        for (let _group in this.g) {
-            levels[_group] = {}
-            for (let _module in this.g[_group].m) {
-                let level = 1
-                if (levels[_group][_module] == null)
-                    levels[_group][_module] = 1 //Starts at level 1
-                else (levels[_group][_module] > 1)
-                level = levels[_group][_module]
-                let obj = this.g[_group].m[_module]
-                goLower(_group, _module, level) //level 1
+        for (let group in args) {
+
+            let _group = args[group].getName()
+            if (this.group[_group] != null) {
+                levels[_group] = {}
+                for (let _module in this.group[_group].module) {
+                    let level = 1
+                    if (levels[_group][_module] == null)
+                        levels[_group][_module] = 1 //Starts at level 1
+                    else (levels[_group][_module] > 1)
+                    level = levels[_group][_module]
+                    let obj = this.group[_group].module[_module]
+                    goLower(_group, _module, level) //level 1
+                }
             }
         }
         return [levels, highest]
@@ -570,8 +616,8 @@ module.exports = class Fabritect extends EventEmitter {
      * @param {String} mod Module
      */
     isModule(group, mod) {
-        let isGroup = this.g.hasOwnProperty(group)
-        let isModule = isGroup ? this.g[group].m.hasOwnProperty(mod) : false
+        let isGroup = this.group.hasOwnProperty(group)
+        let isModule = isGroup ? this.group[group].module.hasOwnProperty(mod) : false
         return isModule
     }
     /**
@@ -583,21 +629,21 @@ module.exports = class Fabritect extends EventEmitter {
             let seen = []
             seen.push(name)
             let lowTree = {}
-            for (let _group in this.g[group].m[mod].con) {
+            for (let _group in this.group[group].module[mod].con) {
                 let color = "green"
-                if (this.g[_group].o.hasOwnProperty("color")) {
-                    color = this.g[_group].o.color
+                if (this.group[_group].options.hasOwnProperty("color")) {
+                    color = this.group[_group].options.color
                 }
-                for (let _module in this.g[group].m[mod].con[_group]) {
+                for (let _module in this.group[group].module[mod].con[_group]) {
                     if (this.isModule(_group, _module)) {
 
-                        let [_g, _n] = this.g[_group].m[_module].f.split("@")
+                        let [_g, _n] = this.group[_group].module[_module].f.split("@")
                         let [_m, _v] = _n.split("#")
                         let nameColor = chalk`{${color} ${_g}}{gray @}{green ${_m}}{gray #}{white ${_v}}`
-                        let name = this.g[_group].m[_module].f
+                        let name = this.group[_group].module[_module].f
                         lowTree[nameColor] = makeTree(_group, _module)
                     } else {
-                        let _vers = this.g[group].m[mod].con[_group][_module]
+                        let _vers = this.group[group].module[mod].con[_group][_module]
                         let nameColor = chalk`{${color} ${_group}}{gray @}{red ${_module}}{gray #}{white ${_vers}}`
                         lowTree[nameColor] = {}
                     }
@@ -605,51 +651,89 @@ module.exports = class Fabritect extends EventEmitter {
             }
             return lowTree
         }
-        for (let group in this.g) {
+        for (let group in this.group) {
             let color = "green"
-            if (this.g[group].o.hasOwnProperty("color")) {
-                color = this.g[group].o.color
+            if (this.group[group].options.hasOwnProperty("color")) {
+                color = this.group[group].options.color
             }
-            for (let mod in this.g[group].m) {
+            for (let mod in this.group[group].module) {
 
-                let [_g, _n] = this.g[group].m[mod].f.split("@")
+                let [_g, _n] = this.group[group].module[mod].f.split("@")
                 let [_m, _v] = _n.split("#")
                 let nameColor = chalk`{${color} ${_g}}{gray @}{green ${_m}}{gray #}{white ${_v}}`
 
 
-                let name = this.g[group].m[mod].f
+                let name = this.group[group].module[mod].f
                 let localTree = makeTree(group, mod, name)
 
                 tree[nameColor] = localTree
 
             }
         }
-        console.log(treeify.asTree(tree, true))
+        console.log(chalk`{cyan {bold [Fabritect] {white Consumes Tree}}}\n${treeify.asTree(tree, true)}`)
         return tree
     }
     /**
      * start - Starts the "code execution" of a plugin
      */
     start() {
-        //Wait for all files to load...
-        Promise.all(this.loadWaiting)
-            .then(() => {
-                //Shows the tree of consume
-                this.displayConsumeTree()
-                //Now create the levels
-                let [levels, highest] = this.createLevelTree()
+        let self = this
+        let args = Array.prototype.slice.call(arguments);
+        let waitedPromises = []
+        for (let arg in args) {
+            let group = args[arg]
+            if (group.isGroup != null) {
+                if (group.isGroup == true) {
+                    waitedPromises.push(self.groupWaiting[group.getName()])
+                }
+            }
+        }
+        if (waitedPromises.length < 0) {
+            console.log("No Groups Started")
+        } else {
+            let emergencyShutdown = setTimeout(() => {
+                console.log(chalk`{cyan {bold [Fabritect] {red Loading of modules seem to be hanging. Exiting}}}`)
+                process.exit(-1)
+            }, 5000)
+            //Wait for all files to load...
+            Promise.all(waitedPromises)
+                .then(() => {
+                    //Shows the tree of consume
+                    this.displayConsumeTree()
+                    //Now create the levels
+                    let [levels, highest] = this.createLevelTree(args)
 
-                //Creates a schematic from the levels
-                let scheme = this.buildLoadingScheme(levels, highest)
+                    //Creates a schematic from the levels
+                    let scheme = this.buildLoadingScheme(levels, highest)
 
-                //Loads the schematic and run code!
-                this.attemptToLoad(scheme)
-            })
-            .catch((error) => {
-                console.log(error)
-                console.log("Failed to start, no loadings...")
-            });
-        console.log(timeDiff(startTime))
+                    //Loads the schematic and run code!
+                    this.attemptToLoad(scheme).then(() => {
+                        let groups = "("
+                        for (let arg in args) {
+                            let group = args[arg]
+                            if (group.isGroup != null) {
+                                if (group.isGroup == true) {
+                                    groups += group.getName().toUpperCase()
+                                    if (args.length - 1 != arg) {
+                                        groups += ", "
+                                    } else {
+                                        groups += ")"
+                                    }
+                                }
+                            }
+                        }
+                        console.log(chalk`{cyan {bold [Fabritect] {white Loaded} {gray ${groups}} {white in ${timeDiff(startTime)}ms }}}`)
+                        clearTimeout(emergencyShutdown)
+                    }).catch((err) => {
+                        console.log(err)
+                        console.log("Failed to load")
+                    })
+                })
+                .catch((error) => {
+                    console.log(error)
+                    console.log("Failed to start, no loadings...")
+                });
+        }
     }
 }
 
