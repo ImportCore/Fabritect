@@ -109,8 +109,8 @@ module.exports = class Fabritect extends EventEmitter {
                             self.group[group].module[name].p = obj //Package
                             self.group[group].module[name].directory = dir //Set it to the plugin
                             self.group[group].module[name].file = path.resolve(mainFile) //Set it to the plugin
-                            self.group[group].module[name].sI = {}
-                            self.group[group].module[name].sT = {}
+                            self.group[group].module[name].sI = []
+                            self.group[group].module[name].sT = []
 
                             //Now check if it has all version and consumes in the file.
                             let hasFab = obj.hasOwnProperty("fabritect")
@@ -339,12 +339,16 @@ module.exports = class Fabritect extends EventEmitter {
 
         }
         return new Promise((resolve) => {
+            let opts = {}
             let groupOptions = this.group[group].options
 
-            //Custom Console to pass onto a MODULE
-            let customRequire = (module) => { console.log(`REQURING of '${module}' is not allowed`) }
+            //Custom Require (deny module access if so)
+            opts.require = (module) => { console.log(`REQURING of '${module}' is not allowed`) }
             if (groupOptions.require) {
-                customRequire = require
+                opts.require = require
+            }
+            if (groupOptions.process) {
+                opts.process = process
             }
             /**
              * customInterval - A normal interval that supports unloading
@@ -425,19 +429,19 @@ module.exports = class Fabritect extends EventEmitter {
             //Validate Code
             let safe = this._validate(group, name, code)
             if (safe) {
-                //Compiled the code
+                //Custom Logger Function
                 let log = { log: (message) => { this.log(group, name, message) } }
 
-                let opts = {
-                    require: customRequire,
-                    console: log,
-                    setInterval: customInterval,
-                    setTimeout: customTimeout,
-                    __root: self.group[group].directory,
-                    __name: name,
-                    __group: group
-                }
+                //VM Options
+                opts.console = log
+                opts.setInterval = customInterval
+                opts.setTimeout = customTimeout
+                opts.__root = self.group[group].directory
+                opts.__name = name
+                opts.__group = group
                 opts[prefix] = runtime
+
+                //Compile Code, via code transformation (if needed)
                 let compiled = this._transform(group, name, newCode)
 
                 //Run the code. (make the environment)
